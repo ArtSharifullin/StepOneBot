@@ -104,8 +104,10 @@ class HHRssParser:
             return None
 
         salary = self._extract_salary_from_text(f"{title}\n{description}")
-        salary_text = f"{salary:,} руб.".replace(",", " ") if salary else "Не указана"
-        company = self._extract_company(title=title, description=description)
+        if salary is None:
+            salary = self._extract_salary_from_rss_description(description)
+        salary_text = f"от {salary:,} ₽".replace(",", " ") if salary else "Не указана"
+        company = self._extract_company(entry=entry, title=title, description=description)
 
         return Vacancy(
             title=title,
@@ -178,21 +180,58 @@ class HHRssParser:
 
         return max(candidates)
 
-    def _extract_company(self, title: str, description: str) -> str:
-        # Часто HH добавляет компанию после "—".
-        if "—" in title:
-            parts = [part.strip() for part in title.split("—") if part.strip()]
-            if len(parts) > 1:
-                return parts[-1]
+    def _strip_html(self, text: str) -> str:
+        clean = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE)
+        clean = re.sub(r"</p>", "\n", clean, flags=re.IGNORECASE)
+        clean = re.sub(r"<[^>]+>", " ", clean)
+        return html.unescape(clean).replace("\xa0", " ")
 
-        # Резервный путь по description.
+    def _extract_salary_from_rss_description(self, description: str) -> Optional[int]:
+        plain = self._strip_html(description)
+        match = re.search(
+            r"Предполагаемый уровень месячного дохода:\s*(?:от\s*)?([\d\s]+)",
+            plain,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return None
+        digits = re.sub(r"\s+", "", match.group(1))
+        if not digits.isdigit():
+            return None
+        value = int(digits)
+        return value if value >= 10_000 else None
+
+    def _extract_company(
+        self,
+        entry: feedparser.FeedParserDict,
+        title: str,
+        description: str,
+    ) -> str:
+        author = (entry.get("author") or "").strip()
+        if author:
+            return author
+
+        plain_description = self._strip_html(description)
+
+        # HH RSS: «Вакансия компании: Название»
         company_patterns = [
-            r"Компания:\s*([^<\n\r]+)",
-            r"Работодатель:\s*([^<\n\r]+)",
+            r"Вакансия компании:\s*([^\n\r]+)",
+            r"Компания:\s*([^\n\r]+)",
+            r"Работодатель:\s*([^\n\r]+)",
+            r"employer[\"']?\s*:\s*[\"']([^\"']+)",
         ]
         for pattern in company_patterns:
-            match = re.search(pattern, description, flags=re.IGNORECASE)
+            match = re.search(pattern, plain_description, flags=re.IGNORECASE)
             if match:
-                return match.group(1).strip()
+                company = match.group(1).strip()
+                if company and company.lower() not in ("не указана", "не указан"):
+                    return company
+
+        # Иногда компания указана в заголовке после разделителя.
+        for separator in ("—", "–", "-", "|", "·"):
+            if separator in title:
+                parts = [part.strip() for part in title.split(separator) if part.strip()]
+                if len(parts) > 1:
+                    return parts[-1]
 
         return ""

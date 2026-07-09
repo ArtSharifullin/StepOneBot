@@ -16,7 +16,7 @@ from telegram.ext import (
     filters,
 )
 
-from bot_handlers import handle_city_callback, handle_text, start
+from bot_handlers import handle_callback, handle_text, start
 from hh_rss_parser import HHRssParser
 from scheduler import VacancyScheduler
 from user_db import UserDB
@@ -117,7 +117,7 @@ def main() -> None:
     application.bot_data["scheduler"] = scheduler
 
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(handle_city_callback, pattern=r"^city:\d+$"))
+    application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     application.add_error_handler(error_handler)
 
